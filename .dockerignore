@@ -1,0 +1,16 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.DS_Store
+venv/
+.venv/
+test/
+qa_test.py
+data/embeddings.npy
+data/faiss.index
+data/metadata.json
+data/posters.json
+README.md

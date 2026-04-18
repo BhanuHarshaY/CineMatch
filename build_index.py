@@ -1,25 +1,16 @@
 """
-build_index.py — One-time indexing pipeline for the movie recommender.
+build_index.py — Run once at Docker build time.
 
-Run this ONCE at Docker build time to generate:
-  - data/embeddings.npy    (8807 x 768 float32 matrix, L2-normalized)
-  - data/faiss.index       (FAISS IndexFlatIP for cosine similarity search)
-  - data/metadata.json     (row metadata for serving results)
+Generates:
+  data/embeddings.npy  — 8,807 × 768 L2-normalized float32 matrix
+  data/faiss.index     — IndexFlatIP for cosine similarity search
+  data/metadata.json   — row metadata for API responses
 
-Design decisions:
-  - We use IndexFlatIP (inner product) on L2-normalized vectors, which is
-    mathematically equivalent to cosine similarity. This is the correct metric
-    for sentence-transformers, which are trained with a cosine objective.
-  - We save to disk so the FastAPI server loads in <1s instead of regenerating
-    embeddings on every startup (which would take ~3-5 min on CPU).
-  - Text template puts description last to give it the most weight in the
-    model's positional attention. Structured fields (type, genre, rating)
-    go first as categorical anchors.
-
-NOTE on Apple Silicon: faiss-cpu and PyTorch both bundle their own OpenMP
-(libomp) runtime. Loading both simultaneously causes a segfault. We avoid
-this by lazy-importing faiss AFTER sentence-transformers finishes encoding.
-In Docker (Linux), this isn't an issue, but the lazy import is harmless.
+Key decisions:
+  - IndexFlatIP on L2-normalized vectors = cosine similarity
+  - Description placed last in text template for maximum embedding weight
+  - faiss imported after sentence-transformers finishes encoding
+    (avoids OpenMP conflict on Apple Silicon — harmless on Linux)
 """
 
 import csv

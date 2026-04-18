@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineMatch — AI Movie Recommendations</title>
+    <meta name="description" content="Get personalized movie and TV show recommendations powered by AI semantic search and Gemini re-ranking.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 720px;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            padding: 48px 0 32px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: -0.5px;
+        }
+
+        h1 span {
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 8px;
+        }
+
+        /* Search */
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 32px;
+        }
+
+        #query-input {
+            flex: 1;
+            padding: 14px 18px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            background: #141420;
+            border: 1px solid #2a2a3a;
+            border-radius: 10px;
+            color: #e0e0e0;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #query-input:focus {
+            border-color: #6366f1;
+        }
+
+        #query-input::placeholder {
+            color: #555;
+        }
+
+        #submit-btn {
+            padding: 14px 28px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            font-weight: 600;
+            background: linear-gradient(135deg, #6366f1, #7c3aed);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            white-space: nowrap;
+        }
+
+        #submit-btn:hover {
+            opacity: 0.9;
+        }
+
+        #submit-btn:active {
+            transform: scale(0.97);
+        }
+
+        #submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 48px 0;
+            color: #888;
+        }
+
+        .loading .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #2a2a3a;
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error */
+        .error {
+            text-align: center;
+            padding: 24px;
+            color: #f87171;
+            background: #1a1020;
+            border: 1px solid #2d1a2e;
+            border-radius: 10px;
+            margin-bottom: 16px;
+        }
+
+        /* Results */
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 16px;
+        }
+
+        .results-header h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .timing {
+            font-size: 0.78rem;
+            color: #666;
+        }
+
+        /* Movie card */
+        .movie-card {
+            background: #141420;
+            border: 1px solid #1e1e30;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 12px;
+            transition: border-color 0.2s;
+        }
+
+        .movie-card:hover {
+            border-color: #2a2a4a;
+        }
+
+        .card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .card-meta {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .badge {
+            font-size: 0.72rem;
+            font-weight: 500;
+            padding: 3px 8px;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+
+        .badge-type {
+            background: #1e1e3a;
+            color: #a5b4fc;
+        }
+
+        .badge-year {
+            background: #1a2020;
+            color: #86efac;
+        }
+
+        .badge-rating {
+            background: #201a1a;
+            color: #fca5a5;
+        }
+
+        .card-reason {
+            font-size: 0.88rem;
+            color: #a78bfa;
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .card-description {
+            font-size: 0.84rem;
+            color: #777;
+            line-height: 1.6;
+        }
+
+        .card-rank {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #444;
+            margin-right: 8px;
+        }
+
+        /* Intent tag pills */
+        .intent-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 20px;
+        }
+
+        .intent-tag {
+            font-size: 0.72rem;
+            padding: 3px 10px;
+            border-radius: 20px;
+            background: #1a1a2e;
+            color: #888;
+            border: 1px solid #252540;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 40px 0 24px;
+            color: #444;
+            font-size: 0.78rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 Cine<span>Match</span></h1>
+            <p class="subtitle">AI-powered movie recommendations · Semantic search + Gemini re-ranking</p>
+        </header>
+
+        <div class="search-box">
+            <input
+                type="text"
+                id="query-input"
+                placeholder="e.g. something dark and psychological like Inception"
+                autocomplete="off"
+            >
+            <button id="submit-btn" onclick="submitQuery()">Search</button>
+        </div>
+
+        <div id="results-area"></div>
+
+        <footer>
+            CineMatch · Built with FAISS, sentence-transformers, and Gemini 2.5 Flash
+        </footer>
+    </div>
+
+    <script>
+        const input = document.getElementById('query-input');
+        const btn = document.getElementById('submit-btn');
+        const resultsArea = document.getElementById('results-area');
+
+        // Submit on Enter key
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') submitQuery();
+        });
+
+        async function submitQuery() {
+            const query = input.value.trim();
+            if (!query) {
+                resultsArea.innerHTML = '<div class="error">Please enter a search query</div>';
+                input.focus();
+                return;
+            }
+
+            // Show loading state
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+            resultsArea.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing your query with Gemini...</p>
+                    <p style="font-size: 0.8rem; margin-top: 4px;">This takes ~5 seconds</p>
+                </div>
+            `;
+
+            try {
+                const res = await fetch('/recommend', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query }),
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Request failed');
+                }
+
+                const data = await res.json();
+                renderResults(data);
+            } catch (err) {
+                resultsArea.innerHTML = `<div class="error">⚠ ${err.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Search';
+            }
+        }
+
+        function renderResults(data) {
+            const { results, timing, intent } = data;
+
+            // Build intent tags
+            const tags = [];
+            if (intent.content_type && intent.content_type !== 'any') {
+                tags.push(intent.content_type);
+            }
+            (intent.genres || []).forEach(g => tags.push(g));
+            (intent.mood || []).forEach(m => tags.push(m));
+
+            const intentHTML = tags.length > 0
+                ? `<div class="intent-bar">${tags.map(t => `<span class="intent-tag">${t}</span>`).join('')}</div>`
+                : '';
+
+            // Build cards
+            const cardsHTML = results.map((r, i) => {
+                const reason = r.rerank_reason || '';
+                const desc = r.description || '';
+                const truncDesc = desc.length > 180 ? desc.slice(0, 180) + '...' : desc;
+
+                return `
+                    <div class="movie-card">
+                        <div class="card-top">
+                            <div class="card-title">
+                                <span class="card-rank">#${i + 1}</span>
+                                ${r.title}
+                            </div>
+                            <div class="card-meta">
+                                <span class="badge badge-type">${r.type}</span>
+                                <span class="badge badge-year">${r.release_year}</span>
+                                ${r.rating ? `<span class="badge badge-rating">${r.rating}</span>` : ''}
+                            </div>
+                        </div>
+                        ${reason ? `<div class="card-reason">→ ${reason}</div>` : ''}
+                        <div class="card-description">${truncDesc}</div>
+                    </div>
+                `;
+            }).join('');
+
+            resultsArea.innerHTML = `
+                ${intentHTML}
+                <div class="results-header">
+                    <h2>${results.length} Recommendations</h2>
+                    <span class="timing">${timing.total}s total · ${timing.intent_extraction}s intent · ${timing.reranking}s rerank</span>
+                </div>
+                ${cardsHTML}
+            `;
+        }
+    </script>
+</body>
+</html>

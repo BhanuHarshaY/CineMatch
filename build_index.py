@@ -30,11 +30,6 @@ from pathlib import Path
 
 import numpy as np
 
-# NOTE: We deliberately do NOT import faiss or sentence_transformers at the
-# top level. Both bundle OpenMP runtimes that conflict on macOS/Apple Silicon.
-# Instead, we import them sequentially in the functions that need them, so
-# only one OpenMP runtime is active during encoding.
-
 
 # Config
 

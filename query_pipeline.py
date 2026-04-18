@@ -7,23 +7,7 @@ Stage 1: Intent Extraction (Gemini 2.5 Flash)
 Stage 2: Retrieval + Re-ranking
   enriched_query → sentence-transformers → FAISS top-50 → Gemini re-rank → top 10
 
-Why enriched_query instead of raw query:
-  Raw queries contain filler words, implicit meaning, and title references.
-  Gemini unpacks "something dark like Inception" into a semantically dense
-  description that maps directly to the language in Netflix descriptions,
-  producing better embedding matches.
 
-Why retrieve 50 then re-rank to 10:
-  FAISS is fast but blunt — it can't reason about nuance ("funny horror"
-  vs "horror near comedy"). We pull 50 candidates (recall-optimized), then
-  let Gemini read actual descriptions and reason about quality (precision-
-  optimized). 50 is enough diversity without blowing up token cost.
-
-Gemini JSON failure handling:
-  Every LLM call has a graceful fallback. If intent extraction fails, we use
-  the raw query. If re-ranking fails, we return the FAISS top-10 directly.
-  JSON is extracted via regex (handles markdown fences + surrounding text),
-  validated against expected schema, and missing fields get sensible defaults.
 """
 
 import json

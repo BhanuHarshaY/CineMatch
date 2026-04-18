@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CineMatch — AI Movie Recommendations</title>
-    <meta name="description" content="Get personalized movie and TV show recommendations powered by AI semantic search and GPT-4o-mini re-ranking.">
+    <meta name="description"
+        content="Get personalized movie and TV show recommendations powered by AI semantic search and GPT-4o-mini re-ranking.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -19,15 +21,89 @@
             background: #0a0a0f;
             color: #e0e0e0;
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            overflow-x: hidden;
+        }
+
+        /* Poster collage background */
+        .poster-bg {
+            position: fixed;
+            top: -50%;
+            left: 0;
+            width: 100%;
+            height: 200%;
+            z-index: 0;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 3px;
+            padding: 3px;
+            animation: drift 60s linear infinite;
+        }
+
+        @keyframes drift {
+            0% {
+                transform: translateY(0);
+            }
+
+            100% {
+                transform: translateY(-25%);
+            }
+        }
+
+        .poster-bg img {
+            width: 100%;
+            aspect-ratio: 2/3;
+            object-fit: cover;
+            border-radius: 4px;
+            opacity: 0.2;
+        }
+
+        .poster-bg .placeholder {
+            width: 100%;
+            aspect-ratio: 2/3;
+            background: #12121a;
+            border-radius: 4px;
+        }
+
+        /* Dark overlay on top of posters */
+        .poster-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 10, 10, 0.3);
+            z-index: 1;
         }
 
         .container {
+            position: relative;
+            z-index: 2;
             width: 100%;
             max-width: 720px;
+            margin: 0 auto;
             padding: 0 20px;
+        }
+
+        /* Frosted glass card */
+        .glass-card {
+            background: rgba(14, 14, 22, 0.7);
+            backdrop-filter: blur(0px);
+            -webkit-backdrop-filter: blur(0px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            padding: 36px 28px;
+            margin-bottom: 32px;
+        }
+
+        @media (max-width: 600px) {
+            .poster-bg {
+                grid-template-columns: repeat(4, 1fr);
+            }
+
+            .glass-card {
+                padding: 24px 16px;
+                border-radius: 14px;
+            }
         }
 
         /* Header */
@@ -130,7 +206,9 @@
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         .loading-stage {
@@ -164,11 +242,25 @@
         }
 
         @keyframes fill {
-            0%   { width: 0%; }
-            30%  { width: 25%; }
-            60%  { width: 55%; }
-            85%  { width: 80%; }
-            100% { width: 95%; }
+            0% {
+                width: 0%;
+            }
+
+            30% {
+                width: 25%;
+            }
+
+            60% {
+                width: 55%;
+            }
+
+            85% {
+                width: 80%;
+            }
+
+            100% {
+                width: 95%;
+            }
         }
 
         /* Error */
@@ -318,28 +410,29 @@
         }
     </style>
 </head>
+
 <body>
+    <!-- Poster collage background -->
+    <div class="poster-bg" id="poster-bg"></div>
+    <div class="poster-overlay"></div>
+
     <div class="container">
         <header>
             <h1>🎬 Cine<span>Match</span></h1>
-            <p class="subtitle">AI-powered movie recommendations · Semantic search + GPT-4o-mini re-ranking</p>
+            <p class="subtitle">AI-powered movie recommendations </p>
         </header>
 
-        <div class="search-box">
-            <input
-                type="text"
-                id="query-input"
-                placeholder="e.g. something dark and psychological like Inception"
-                autocomplete="off"
-            >
-            <button id="submit-btn" onclick="submitQuery()">Search</button>
+        <div class="glass-card">
+            <div class="search-box">
+                <input type="text" id="query-input" placeholder="e.g. something dark and psychological like Inception"
+                    autocomplete="off">
+                <button id="submit-btn" onclick="submitQuery()">Search</button>
+            </div>
         </div>
 
         <div id="results-area"></div>
 
-        <footer>
-            CineMatch · Built with FAISS, sentence-transformers, and GPT-4o-mini
-        </footer>
+
     </div>
 
     <script>
@@ -459,6 +552,37 @@
                 ${cardsHTML}
             `;
         }
+
+        // Load poster collage background
+        async function loadPosters() {
+            try {
+                const res = await fetch('/api/posters');
+                const posters = await res.json();
+                if (!posters.length) return;
+
+                const bg = document.getElementById('poster-bg');
+                // Duplicate posters to fill the tall scrolling container
+                const allPosters = [...posters, ...posters, ...posters];
+
+                allPosters.forEach(p => {
+                    const img = document.createElement('img');
+                    img.src = p.url;
+                    img.alt = p.title;
+                    img.loading = 'lazy';
+                    img.onerror = function () {
+                        // Replace broken image with dark placeholder
+                        const div = document.createElement('div');
+                        div.className = 'placeholder';
+                        this.replaceWith(div);
+                    };
+                    bg.appendChild(img);
+                });
+            } catch (e) {
+                // Poster loading is non-critical — fail silently
+            }
+        }
+        loadPosters();
     </script>
 </body>
+
 </html>

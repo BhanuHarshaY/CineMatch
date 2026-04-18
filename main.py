@@ -7,6 +7,7 @@ Serves the HTML frontend at GET / and the recommendation API at POST /recommend.
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -85,6 +86,16 @@ async def serve_frontend():
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Frontend not found")
     return FileResponse(index_path)
+
+
+@app.get("/api/posters")
+async def get_posters():
+    """Return cached poster URLs for the background collage."""
+    poster_path = Path("data/posters.json")
+    if not poster_path.exists():
+        return []
+    with open(poster_path, "r") as f:
+        return json.load(f)
 
 
 @app.post("/recommend", response_model=RecommendResponse)

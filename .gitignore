@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+data/embeddings.npy
+data/faiss.index
+data/metadata.json
+data/netflix_data.csv
+*.DS_Store
+venv/
+.venv/

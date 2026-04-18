@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CineMatch — AI Movie Recommendations</title>
-    <meta name="description" content="Get personalized movie and TV show recommendations powered by AI semantic search and Gemini re-ranking.">
+    <meta name="description" content="Get personalized movie and TV show recommendations powered by AI semantic search and GPT-4o-mini re-ranking.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -126,11 +126,49 @@
             border-top-color: #6366f1;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
-            margin-bottom: 12px;
+            margin-bottom: 16px;
         }
 
         @keyframes spin {
             to { transform: rotate(360deg); }
+        }
+
+        .loading-stage {
+            font-size: 0.95rem;
+            color: #a5b4fc;
+            margin-bottom: 6px;
+            min-height: 1.4em;
+            transition: opacity 0.3s;
+        }
+
+        .loading-sub {
+            font-size: 0.78rem;
+            color: #555;
+        }
+
+        .progress-track {
+            width: 200px;
+            height: 3px;
+            background: #1e1e30;
+            border-radius: 3px;
+            margin: 16px auto 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #6366f1, #a855f7);
+            border-radius: 3px;
+            animation: fill 8s ease-out forwards;
+        }
+
+        @keyframes fill {
+            0%   { width: 0%; }
+            30%  { width: 25%; }
+            60%  { width: 55%; }
+            85%  { width: 80%; }
+            100% { width: 95%; }
         }
 
         /* Error */
@@ -265,13 +303,26 @@
             color: #444;
             font-size: 0.78rem;
         }
+
+        /* Note banner */
+        .note-banner {
+            padding: 12px 16px;
+            background: #1a1a2e;
+            border: 1px solid #2a2a4a;
+            border-left: 3px solid #6366f1;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            color: #a5b4fc;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>🎬 Cine<span>Match</span></h1>
-            <p class="subtitle">AI-powered movie recommendations · Semantic search + Gemini re-ranking</p>
+            <p class="subtitle">AI-powered movie recommendations · Semantic search + GPT-4o-mini re-ranking</p>
         </header>
 
         <div class="search-box">
@@ -287,7 +338,7 @@
         <div id="results-area"></div>
 
         <footer>
-            CineMatch · Built with FAISS, sentence-transformers, and Gemini 2.5 Flash
+            CineMatch · Built with FAISS, sentence-transformers, and GPT-4o-mini
         </footer>
     </div>
 
@@ -309,16 +360,27 @@
                 return;
             }
 
-            // Show loading state
+            // Show loading state with staged progress
             btn.disabled = true;
             btn.textContent = 'Searching...';
             resultsArea.innerHTML = `
                 <div class="loading">
                     <div class="spinner"></div>
-                    <p>Analyzing your query with Gemini...</p>
-                    <p style="font-size: 0.8rem; margin-top: 4px;">This takes ~5 seconds</p>
+                    <p class="loading-stage" id="loading-stage">Understanding your query...</p>
+                    <p class="loading-sub">This usually takes 5–8 seconds</p>
+                    <div class="progress-track"><div class="progress-fill"></div></div>
                 </div>
             `;
+
+            // Cycle through stages to match pipeline timing
+            const stageEl = document.getElementById('loading-stage');
+            const stages = [
+                { text: 'Searching 8,807 titles...', delay: 2000 },
+                { text: 'Ranking best matches...', delay: 4500 },
+            ];
+            const timers = stages.map(s =>
+                setTimeout(() => { if (stageEl) stageEl.textContent = s.text; }, s.delay)
+            );
 
             try {
                 const res = await fetch('/recommend', {
@@ -337,13 +399,14 @@
             } catch (err) {
                 resultsArea.innerHTML = `<div class="error">⚠ ${err.message}</div>`;
             } finally {
+                timers.forEach(clearTimeout);
                 btn.disabled = false;
                 btn.textContent = 'Search';
             }
         }
 
         function renderResults(data) {
-            const { results, timing, intent } = data;
+            const { results, timing, intent, note } = data;
 
             // Build intent tags
             const tags = [];
@@ -382,12 +445,17 @@
                 `;
             }).join('');
 
+            const noteHTML = note
+                ? `<div class="note-banner">ℹ️ ${note}</div>`
+                : '';
+
             resultsArea.innerHTML = `
                 ${intentHTML}
                 <div class="results-header">
                     <h2>${results.length} Recommendations</h2>
                     <span class="timing">${timing.total}s total · ${timing.intent_extraction}s intent · ${timing.reranking}s rerank</span>
                 </div>
+                ${noteHTML}
                 ${cardsHTML}
             `;
         }

@@ -1,11 +1,11 @@
 """
 query_pipeline.py — Two-stage query pipeline for movie recommendations.
 
-Stage 1: Intent Extraction (Gemini 2.5 Flash)
-  Raw query → Gemini → structured intent + enriched_query
+Stage 1: Intent Extraction (GPT-4o-mini)
+  Raw query → OpenAI → structured intent + enriched_query
 
 Stage 2: Retrieval + Re-ranking
-  enriched_query → sentence-transformers → FAISS top-50 → Gemini re-rank → top 10
+  enriched_query → sentence-transformers → FAISS top-50 → GPT-4o-mini re-rank → top 10
 
 
 """
@@ -20,16 +20,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 import numpy as np
-from google import genai
+from openai import OpenAI
 
-# Load .env file so GOOGLE_API_KEY is available via os.environ
+# Load .env file so OPENAI_API_KEY is available via os.environ
 load_dotenv()
 
 # Config
 DATA_DIR = Path("data")
 EMBEDDING_MODEL = "all-mpnet-base-v2"
-GEMINI_MODEL = "gemini-2.5-flash"
+OPENAI_MODEL = "gpt-4o-mini"
 FAISS_TOP_K = 50
+FAISS_SCORE_THRESHOLDS = [0.30, 0.22, 0.15]  # Adaptive: try strict first, relax if too few results
+FAISS_MIN_CANDIDATES = 8  # Minimum candidates before relaxing threshold
 FINAL_TOP_K = 10
 
 
@@ -77,61 +79,73 @@ You are a movie/TV show recommendation expert. The user asked:
 
 "{query}"
 
-Below are {count} candidate titles with descriptions and ratings. Select the \
-{top_k} BEST matches for the user's query. Consider relevance to their mood, \
-themes, genres, and specific preferences.
+Below are {count} candidate titles with descriptions, ratings, and directors. \
+Select the BEST matches for the user's query.
 
 Candidates:
 {candidates}
 
-Return ONLY valid JSON — an array of exactly {top_k} objects:
-[
-  {{
-    "index": 0,
-    "title": "Movie Title",
-    "reason": "One-line explanation of why this matches the query"
-  }}
-]
+Return ONLY valid JSON with this structure:
+{{
+  "note": null,
+  "results": [
+    {{
+      "index": 0,
+      "title": "Movie Title",
+      "reason": "One-line explanation of why this matches the query"
+    }}
+  ]
+}}
 
 Rules:
 - "index" must be the candidate number from the list above (0-indexed)
 - Order from best match (first) to weakest match (last)
 - "reason" should be specific to the user's query, not generic praise
-- Return EXACTLY {top_k} results
-- DO NOT include any text outside the JSON array
+- Return between 5 and {top_k} results — ONLY include genuinely relevant matches
+- If fewer than {top_k} strong matches exist, return fewer. Do NOT pad with \
+weak or irrelevant results.
+- DO NOT include any text outside the JSON object
+
+Content-type filtering:
+- Concert films, stand-up comedy specials, and documentaries are NOT matches for \
+"comedy", "family comedy", or "family night" queries — exclude them
+- Match the actual genre the user wants, not superficially related content types
 
 Rating rules:
 - Each candidate includes a content rating (G, PG, PG-13, R, TV-Y, TV-G, TV-PG, \
 TV-14, TV-MA, etc.)
 - If the query mentions "family", "kids", "children", "family night", or \
-"family-friendly", STRONGLY prefer G, PG, TV-Y, TV-Y7, TV-G, and TV-PG rated content
-- For family/kids queries, EXCLUDE R and TV-MA rated content entirely — do not \
-select them even if thematically relevant
-- PG-13 and TV-14 are acceptable for family queries only if nothing better is available
+"family-friendly", ONLY include G, PG, TV-Y, TV-Y7, TV-G, and TV-PG rated content
+- For family/kids queries, EXCLUDE R, TV-MA, TV-14, and PG-13 rated content entirely
+- TV-14 or PG-13 may be included ONLY if fewer than 5 family-safe results exist, \
+and must include explicit justification in the reason
 
-Director/creator accuracy rules:
-- Each candidate includes its director. Use ONLY this metadata to verify director claims.
-- If the user asks for films by a specific director, ONLY include candidates whose \
-listed director matches. Do NOT fabricate connections to a director.
-- If fewer than {top_k} candidates match the queried director, fill remaining slots \
-with thematically similar films. For these fillers, set the reason to \
-"Similar to [Director]'s style: [explanation]" — never claim they were directed by \
-someone they were not.
+Director/actor-specific queries:
+- Each candidate includes its director. Use ONLY this metadata to verify claims.
+- If the user asks for films by a specific director or actor, ONLY count candidates \
+whose listed director/cast actually matches as "direct matches"
+- Do NOT fabricate connections to a director or actor
+- If fewer than 3 direct matches exist, set "note" to a user-friendly message like: \
+"Only [N] [Director/Actor] titles found in this dataset. Showing similar films you \
+might enjoy."
+- For non-direct-match results, prefix the reason with "Fans of [Name] also enjoy: " \
+or "Similar themes: " — never claim false attribution
+- If 3 or more direct matches exist, set "note" to null
 """
 
 
-# Gemini client (initialized lazily)
-_gemini_client = None
+# OpenAI client (initialized lazily)
+_openai_client = None
 
-def get_gemini_client() -> genai.Client:
-    """Get or create the Gemini client. Reads GOOGLE_API_KEY from env."""
-    global _gemini_client
-    if _gemini_client is None:
-        api_key = os.environ.get("GOOGLE_API_KEY")
+def get_openai_client() -> OpenAI:
+    """Get or create the OpenAI client. Reads OPENAI_API_KEY from env."""
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise RuntimeError("GOOGLE_API_KEY environment variable not set")
-        _gemini_client = genai.Client(api_key=api_key)
-    return _gemini_client
+            raise RuntimeError("OPENAI_API_KEY environment variable not set")
+        _openai_client = OpenAI(api_key=api_key)
+    return _openai_client
 
 
 # JSON extraction utilities
@@ -196,7 +210,7 @@ def load_metadata() -> list[dict]:
 # Stage 1: Intent Extraction
 def extract_intent(query: str) -> dict:
     """
-    Use Gemini to extract structured intent from a raw user query.
+    Use OpenAI GPT-4o-mini to extract structured intent from a raw user query.
 
     Returns a dict with genres, mood, themes, tone, era, content_type,
     and enriched_query. On any failure, falls back to using the raw query
@@ -213,20 +227,17 @@ def extract_intent(query: str) -> dict:
     }
 
     try:
-        client = get_gemini_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=INTENT_EXTRACTION_PROMPT.format(query=query),
-            config=genai.types.GenerateContentConfig(
-                temperature=0,
-                max_output_tokens=1024,
-                thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
-            ),
+        client = get_openai_client()
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": INTENT_EXTRACTION_PROMPT.format(query=query)}],
+            temperature=0,
+            max_tokens=800,
         )
 
-        parsed = extract_json_object(response.text)
+        parsed = extract_json_object(response.choices[0].message.content)
         if parsed is None:
-            print(f"[intent] WARNING: Could not parse Gemini response as JSON, using raw query")
+            print(f"[intent] WARNING: Could not parse OpenAI response as JSON, using raw query")
             return default_intent
 
         for key in default_intent:
@@ -242,7 +253,7 @@ def extract_intent(query: str) -> dict:
         return parsed
 
     except Exception as e:
-        print(f"[intent] ERROR: Gemini call failed ({e}), using raw query as fallback")
+        print(f"[intent] ERROR: OpenAI call failed ({e}), using raw query as fallback")
         return default_intent
 
 
@@ -272,8 +283,9 @@ def faiss_search(query_embedding: np.ndarray, index=None, metadata=None,
     """
     Search the FAISS index for the top-k most similar items.
 
-    If index/metadata are provided (pre-loaded at server startup), uses them
-    directly. Otherwise loads from disk (for CLI testing).
+    Uses adaptive thresholds: starts strict (0.30), relaxes to 0.22 then 0.15
+    if fewer than FAISS_MIN_CANDIDATES pass. This ensures mood/vibe queries
+    get enough candidates for the re-ranker to work with.
     """
     if index is None or metadata is None:
         import faiss
@@ -283,26 +295,49 @@ def faiss_search(query_embedding: np.ndarray, index=None, metadata=None,
 
     scores, indices = index.search(query_embedding, top_k)
 
-    results = []
+    # Build full scored list once, then filter at each threshold
+    all_candidates = []
     for score, idx in zip(scores[0], indices[0]):
         if idx == -1:
             continue
         item = metadata[idx].copy()
         item["faiss_score"] = float(score)
-        item["faiss_rank"] = len(results)
-        results.append(item)
+        all_candidates.append(item)
 
-    print(f"[faiss] Retrieved {len(results)} candidates (top score: {results[0]['faiss_score']:.4f})")
+    # Try each threshold tier until we have enough candidates
+    for threshold in FAISS_SCORE_THRESHOLDS:
+        results = [c for c in all_candidates if c["faiss_score"] >= threshold]
+        if len(results) >= FAISS_MIN_CANDIDATES:
+            for i, r in enumerate(results):
+                r["faiss_rank"] = i
+            print(f"[faiss] Retrieved {len(results)} candidates at threshold {threshold} "
+                  f"(top score: {results[0]['faiss_score']:.4f})")
+            return results
+
+    # Even the lowest threshold didn't yield enough — return whatever we have
+    results = [c for c in all_candidates if c["faiss_score"] >= FAISS_SCORE_THRESHOLDS[-1]]
+    for i, r in enumerate(results):
+        r["faiss_rank"] = i
+    if not results:
+        print(f"[faiss] No candidates above minimum threshold {FAISS_SCORE_THRESHOLDS[-1]}")
+        return []
+    print(f"[faiss] Retrieved {len(results)} candidates at minimum threshold {FAISS_SCORE_THRESHOLDS[-1]} "
+          f"(top score: {results[0]['faiss_score']:.4f})")
     return results
 
 
-# Stage 2c: Re-rank with Gemini
-def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list[dict]:
+# Stage 2c: Re-rank with OpenAI
+def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> dict:
     """
-    Use Gemini to re-rank FAISS candidates based on the original query.
+    Use OpenAI GPT-4o-mini to re-rank FAISS candidates based on the original query.
 
+    Returns a dict with 'results' (list) and 'note' (str or None).
+    The note explains limitations (e.g. few director matches in dataset).
     On failure, falls back to the FAISS-ranked top-k.
     """
+    if not candidates:
+        return {"results": [], "note": "No matching candidates found."}
+
     candidate_lines = []
     for i, c in enumerate(candidates):
         rating = c.get('rating', 'NR')
@@ -314,26 +349,38 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
     candidates_text = "\n".join(candidate_lines)
 
     try:
-        client = get_gemini_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=RERANK_PROMPT.format(
+        client = get_openai_client()
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": RERANK_PROMPT.format(
                 query=query,
                 count=len(candidates),
                 top_k=top_k,
                 candidates=candidates_text,
-            ),
-            config=genai.types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=4096,
-                thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
-            ),
+            )}],
+            temperature=0.2,
+            max_tokens=800,
         )
 
-        ranked = extract_json_array(response.text)
+        # Parse response — expects {"note": ..., "results": [...]}
+        raw_text = response.choices[0].message.content
+        parsed = extract_json_object(raw_text)
+        note = None
+        ranked = None
+
+        if parsed and "results" in parsed:
+            ranked = parsed["results"]
+            note = parsed.get("note")
+        else:
+            # Fallback: try parsing as a bare array (backward compat)
+            ranked = extract_json_array(raw_text)
+
         if ranked is None:
-            print(f"[rerank] WARNING: Could not parse Gemini response, using FAISS order")
-            return candidates[:top_k]
+            print(f"[rerank] WARNING: Could not parse OpenAI response, using FAISS order")
+            return {
+                "results": candidates[:top_k],
+                "note": "AI re-ranking unavailable: showing semantic search results only.",
+            }
 
         reranked = []
         for item in ranked:
@@ -344,23 +391,18 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
                 result["final_rank"] = len(reranked)
                 reranked.append(result)
 
-        if len(reranked) < top_k:
-            seen_ids = {r["show_id"] for r in reranked}
-            for c in candidates:
-                if len(reranked) >= top_k:
-                    break
-                if c["show_id"] not in seen_ids:
-                    c_copy = c.copy()
-                    c_copy["rerank_reason"] = "Added from FAISS ranking"
-                    c_copy["final_rank"] = len(reranked)
-                    reranked.append(c_copy)
-
-        print(f"[rerank] Gemini selected {len(reranked)} results")
-        return reranked[:top_k]
+        # No padding — if OpenAI returned fewer, that's intentional quality filtering
+        print(f"[rerank] OpenAI selected {len(reranked)} results"
+              f"{f' (note: {note[:60]}...)' if note else ''}")
+        return {"results": reranked[:top_k], "note": note}
 
     except Exception as e:
-        print(f"[rerank] ERROR: Gemini call failed ({e}), using FAISS order")
-        return candidates[:top_k]
+        print(f"[rerank] ERROR: OpenAI call failed ({e}), using FAISS order")
+        fallback_note = (
+            "AI re-ranking unavailable : showing semantic search results only. "
+            "Add OPENAI_API_KEY to .env for full recommendations."
+        )
+        return {"results": candidates[:top_k], "note": fallback_note}
 
 
 # Full Pipeline
@@ -387,7 +429,7 @@ def recommend(query: str, model=None, index=None, metadata=None) -> dict:
     t_faiss = time.time() - t0
 
     t0 = time.time()
-    results = rerank(query, candidates, FINAL_TOP_K)
+    rerank_result = rerank(query, candidates, FINAL_TOP_K)
     t_rerank = time.time() - t0
 
     t_total = time.time() - t_start
@@ -395,7 +437,8 @@ def recommend(query: str, model=None, index=None, metadata=None) -> dict:
     return {
         "query": query,
         "intent": intent,
-        "results": results,
+        "results": rerank_result["results"],
+        "note": rerank_result.get("note"),
         "timing": {
             "intent_extraction": round(t_intent, 2),
             "embedding": round(t_embed, 2),

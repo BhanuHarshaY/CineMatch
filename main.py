@@ -5,9 +5,12 @@ Loads FAISS index, metadata, and embedding model once at startup.
 Serves the HTML frontend at GET / and the recommendation API at POST /recommend.
 """
 
+from __future__ import annotations
+
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -33,8 +36,8 @@ async def lifespan(app: FastAPI):
     """Load heavy resources once at startup, clean up on shutdown."""
     print("[server] Starting up...")
 
-    if not os.environ.get("GOOGLE_API_KEY"):
-        raise RuntimeError("GOOGLE_API_KEY not set. Add it to .env or export it.")
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY not set. Add it to .env or export it.")
 
     # Load resources into shared state (one-time cost: ~5s)
     app_state["model"] = load_embedding_model()
@@ -69,7 +72,8 @@ class RecommendRequest(BaseModel):
 class RecommendResponse(BaseModel):
     query: str
     intent: dict
-    results: list[dict]
+    results: list
+    note: Optional[str] = None
     timing: dict
 
 

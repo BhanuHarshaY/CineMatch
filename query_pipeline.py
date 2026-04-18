@@ -77,9 +77,9 @@ You are a movie/TV show recommendation expert. The user asked:
 
 "{query}"
 
-Below are {count} candidate titles with descriptions. Select the {top_k} BEST \
-matches for the user's query. Consider relevance to their mood, themes, genres, \
-and specific preferences.
+Below are {count} candidate titles with descriptions and ratings. Select the \
+{top_k} BEST matches for the user's query. Consider relevance to their mood, \
+themes, genres, and specific preferences.
 
 Candidates:
 {candidates}
@@ -99,6 +99,24 @@ Rules:
 - "reason" should be specific to the user's query, not generic praise
 - Return EXACTLY {top_k} results
 - DO NOT include any text outside the JSON array
+
+Rating rules:
+- Each candidate includes a content rating (G, PG, PG-13, R, TV-Y, TV-G, TV-PG, \
+TV-14, TV-MA, etc.)
+- If the query mentions "family", "kids", "children", "family night", or \
+"family-friendly", STRONGLY prefer G, PG, TV-Y, TV-Y7, TV-G, and TV-PG rated content
+- For family/kids queries, EXCLUDE R and TV-MA rated content entirely — do not \
+select them even if thematically relevant
+- PG-13 and TV-14 are acceptable for family queries only if nothing better is available
+
+Director/creator accuracy rules:
+- Each candidate includes its director. Use ONLY this metadata to verify director claims.
+- If the user asks for films by a specific director, ONLY include candidates whose \
+listed director matches. Do NOT fabricate connections to a director.
+- If fewer than {top_k} candidates match the queried director, fill remaining slots \
+with thematically similar films. For these fillers, set the reason to \
+"Similar to [Director]'s style: [explanation]" — never claim they were directed by \
+someone they were not.
 """
 
 
@@ -287,8 +305,11 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
     """
     candidate_lines = []
     for i, c in enumerate(candidates):
+        rating = c.get('rating', 'NR')
+        director = c.get('director', 'Unknown')
         candidate_lines.append(
-            f"{i}. [{c['type']}] {c['title']} ({c['release_year']}) — {c['description']}"
+            f"{i}. [{c['type']}] {c['title']} ({c['release_year']}) "
+            f"[Rated {rating}] [Dir: {director}] — {c['description']}"
         )
     candidates_text = "\n".join(candidate_lines)
 

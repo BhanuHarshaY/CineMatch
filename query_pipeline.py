@@ -10,6 +10,8 @@ Stage 2: Retrieval + Re-ranking
 
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -27,8 +29,8 @@ load_dotenv()
 DATA_DIR = Path("data")
 EMBEDDING_MODEL = "all-mpnet-base-v2"
 GEMINI_MODEL = "gemini-2.5-flash"
-FAISS_TOP_K = 50  # Retrieve 50 candidates for re-ranking
-FINAL_TOP_K = 10  # Return 10 after re-ranking
+FAISS_TOP_K = 50
+FINAL_TOP_K = 10
 
 
 # Prompts
@@ -101,7 +103,7 @@ Rules:
 
 
 # Gemini client (initialized lazily)
-_gemini_client: genai.Client | None = None
+_gemini_client = None
 
 def get_gemini_client() -> genai.Client:
     """Get or create the Gemini client. Reads GOOGLE_API_KEY from env."""
@@ -117,11 +119,9 @@ def get_gemini_client() -> genai.Client:
 # JSON extraction utilities
 def extract_json_object(text: str) -> dict | None:
     """Extract the first JSON object from text, handling markdown fences."""
-    # Strip markdown code fences if present
     text = re.sub(r"```(?:json)?\s*", "", text)
     text = re.sub(r"```\s*$", "", text.strip())
 
-    # Try to find a JSON object {...}
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
         try:
@@ -145,6 +145,36 @@ def extract_json_array(text: str) -> list | None:
     return None
 
 
+# Resource loading — called once at server startup
+def load_embedding_model():
+    """Load the sentence-transformer model into memory. Call once at startup."""
+    from sentence_transformers import SentenceTransformer
+    print(f"[startup] Loading embedding model: {EMBEDDING_MODEL}")
+    model = SentenceTransformer(EMBEDDING_MODEL)
+    print(f"[startup] Embedding model loaded")
+    return model
+
+
+def load_faiss_index():
+    """Load the FAISS index from disk. Call once at startup."""
+    import faiss
+    index_path = str(DATA_DIR / "faiss.index")
+    print(f"[startup] Loading FAISS index from {index_path}")
+    index = faiss.read_index(index_path)
+    print(f"[startup] FAISS index loaded: {index.ntotal} vectors")
+    return index
+
+
+def load_metadata() -> list[dict]:
+    """Load movie metadata from disk. Call once at startup."""
+    meta_path = DATA_DIR / "metadata.json"
+    print(f"[startup] Loading metadata from {meta_path}")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    print(f"[startup] Metadata loaded: {len(metadata)} entries")
+    return metadata
+
+
 # Stage 1: Intent Extraction
 def extract_intent(query: str) -> dict:
     """
@@ -161,7 +191,7 @@ def extract_intent(query: str) -> dict:
         "tone": "",
         "era": None,
         "content_type": "any",
-        "enriched_query": query,  # Fallback: use raw query as-is
+        "enriched_query": query,
     }
 
     try:
@@ -170,7 +200,7 @@ def extract_intent(query: str) -> dict:
             model=GEMINI_MODEL,
             contents=INTENT_EXTRACTION_PROMPT.format(query=query),
             config=genai.types.GenerateContentConfig(
-                temperature=0,  
+                temperature=0,
                 max_output_tokens=1024,
                 thinking_config=genai.types.ThinkingConfig(thinking_budget=0),
             ),
@@ -181,12 +211,10 @@ def extract_intent(query: str) -> dict:
             print(f"[intent] WARNING: Could not parse Gemini response as JSON, using raw query")
             return default_intent
 
-        # Validate and merge with defaults (handles missing fields)
         for key in default_intent:
             if key not in parsed:
                 parsed[key] = default_intent[key]
 
-        # Ensure enriched_query is never empty
         if not parsed.get("enriched_query", "").strip():
             parsed["enriched_query"] = query
 
@@ -201,49 +229,45 @@ def extract_intent(query: str) -> dict:
 
 
 # Stage 2a: Embed Query
-def embed_query(enriched_query: str) -> np.ndarray:
+def embed_query(enriched_query: str, model=None) -> np.ndarray:
     """
     Embed the enriched query using the same model that built the index.
 
-    Uses the SAME model and normalization as build_index.py — this is
-    critical. If the query embedding used a different model or wasn't
-    normalized, cosine similarity scores would be meaningless.
+    If model is provided (pre-loaded at server startup), uses it directly.
+    Otherwise loads the model fresh (for CLI testing).
     """
-    # Lazy import to avoid OpenMP conflict with faiss on Apple Silicon
-    from sentence_transformers import SentenceTransformer
+    if model is None:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(EMBEDDING_MODEL)
 
-    model = SentenceTransformer(EMBEDDING_MODEL)
     embedding = model.encode(
         enriched_query,
-        normalize_embeddings=True,  # Must match build_index.py
+        normalize_embeddings=True,
         convert_to_numpy=True,
     )
     return embedding.reshape(1, -1).astype("float32")
 
 
 # Stage 2b: FAISS Search
-def faiss_search(query_embedding: np.ndarray, top_k: int = FAISS_TOP_K) -> list[dict]:
+def faiss_search(query_embedding: np.ndarray, index=None, metadata=None,
+                 top_k: int = FAISS_TOP_K) -> list[dict]:
     """
-    Search the pre-built FAISS index for the top-k most similar items.
+    Search the FAISS index for the top-k most similar items.
 
-    Returns a list of dicts with metadata + similarity score.
-    Score interpretation (IndexFlatIP on normalized vectors):
-      1.0 = identical, 0.5 = moderate similarity, 0.0 = orthogonal.
+    If index/metadata are provided (pre-loaded at server startup), uses them
+    directly. Otherwise loads from disk (for CLI testing).
     """
-    # Lazy import to avoid OpenMP conflict on Apple Silicon
-    import faiss
+    if index is None or metadata is None:
+        import faiss
+        index = faiss.read_index(str(DATA_DIR / "faiss.index"))
+        with open(DATA_DIR / "metadata.json", "r", encoding="utf-8") as f:
+            metadata = json.load(f)
 
-    # Load index and metadata
-    index = faiss.read_index(str(DATA_DIR / "faiss.index"))
-    with open(DATA_DIR / "metadata.json", "r", encoding="utf-8") as f:
-        metadata = json.load(f)
-
-    # Search
     scores, indices = index.search(query_embedding, top_k)
 
     results = []
     for score, idx in zip(scores[0], indices[0]):
-        if idx == -1:  # FAISS returns -1 for missing results
+        if idx == -1:
             continue
         item = metadata[idx].copy()
         item["faiss_score"] = float(score)
@@ -259,14 +283,8 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
     """
     Use Gemini to re-rank FAISS candidates based on the original query.
 
-    This is where precision happens. FAISS found 50 semantically similar items,
-    but Gemini reads the actual descriptions and reasons about which ones truly
-    match the user's intent — handling nuances that vector similarity misses.
-
-    On failure, falls back to the FAISS-ranked top-k (still useful, just less
-    precisely ordered).
+    On failure, falls back to the FAISS-ranked top-k.
     """
-    # Build candidate text for the prompt
     candidate_lines = []
     for i, c in enumerate(candidates):
         candidate_lines.append(
@@ -296,7 +314,6 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
             print(f"[rerank] WARNING: Could not parse Gemini response, using FAISS order")
             return candidates[:top_k]
 
-        # Map Gemini's selections back to full candidate metadata
         reranked = []
         for item in ranked:
             idx = item.get("index")
@@ -306,7 +323,6 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
                 result["final_rank"] = len(reranked)
                 reranked.append(result)
 
-        # If Gemini returned fewer than top_k valid results, pad with FAISS order
         if len(reranked) < top_k:
             seen_ids = {r["show_id"] for r in reranked}
             for c in candidates:
@@ -327,31 +343,28 @@ def rerank(query: str, candidates: list[dict], top_k: int = FINAL_TOP_K) -> list
 
 
 # Full Pipeline
-def recommend(query: str) -> dict:
+def recommend(query: str, model=None, index=None, metadata=None) -> dict:
     """
     Full recommendation pipeline: intent → embed → search → re-rank.
 
-    Returns a dict with the structured intent, timing info, and final
-    ranked results for the API to serve.
+    Accepts pre-loaded resources (model, index, metadata) for server use.
+    Falls back to loading from disk if not provided (CLI use).
     """
     t_start = time.time()
 
-    # Stage 1: Extract intent and build enriched query
     t0 = time.time()
     intent = extract_intent(query)
     t_intent = time.time() - t0
 
-    # Stage 2a: Embed the enriched query
     t0 = time.time()
-    query_embedding = embed_query(intent["enriched_query"])
+    query_embedding = embed_query(intent["enriched_query"], model=model)
     t_embed = time.time() - t0
 
-    # Stage 2b: Retrieve candidates from FAISS
     t0 = time.time()
-    candidates = faiss_search(query_embedding, FAISS_TOP_K)
+    candidates = faiss_search(query_embedding, index=index, metadata=metadata,
+                              top_k=FAISS_TOP_K)
     t_faiss = time.time() - t0
 
-    # Stage 2c: Re-rank with Gemini
     t0 = time.time()
     results = rerank(query, candidates, FINAL_TOP_K)
     t_rerank = time.time() - t0
@@ -374,7 +387,6 @@ def recommend(query: str) -> dict:
 
 # CLI for testing
 if __name__ == "__main__":
-    # .env already loaded at module level via load_dotenv()
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         print("ERROR: GOOGLE_API_KEY not found.")
@@ -402,7 +414,5 @@ if __name__ == "__main__":
             if reason:
                 print(f"     → {reason}")
 
-        # Only test one query to avoid rate limits
         print("\n(Skipping remaining test queries to avoid rate limits)")
         break
-

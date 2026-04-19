@@ -6,7 +6,7 @@ data/embeddings.npy
 data/faiss.index
 data/metadata.json
 data/netflix_data.csv
-data/posters.json
+
 *.DS_Store
 
 venv/

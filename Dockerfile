@@ -14,18 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create data directory
-RUN mkdir -p data
-
-# Build-time: fetch posters (needs TMDB_API_KEY)
-ARG TMDB_API_KEY
-RUN TMDB_API_KEY=${TMDB_API_KEY} python fetch_posters.py
-
 # Build-time: generate embeddings, FAISS index, metadata
-RUN python build_index.py
+RUN python scripts/build_index.py
 
 # Runtime config
 EXPOSE 80
 ENV OPENAI_API_KEY=""
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "80"]

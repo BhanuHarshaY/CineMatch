@@ -12,5 +12,4 @@ qa_test.py
 data/embeddings.npy
 data/faiss.index
 data/metadata.json
-data/posters.json
 README.md

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from query_pipeline import (
+from .query_pipeline import (
     load_embedding_model,
     load_faiss_index,
     load_metadata,
@@ -125,4 +125,4 @@ async def get_recommendations(req: RecommendRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False)
+    uvicorn.run("src.main:app", host="0.0.0.0", port=8080, reload=False)

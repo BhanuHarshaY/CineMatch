@@ -9,7 +9,7 @@ A content-based movie recommendation system that uses **two-stage retrieval** (F
 ![CineMatch Search Results](docs/results.png)
 
 
-*The system successfully retrieved and ranked 5 top-tier results for the query, complete with per-item reasoning.*
+*The system successfully retrieved and ranked 8 top-tier results for the query, complete with per-item reasoning.*
 
 
 
@@ -32,6 +32,30 @@ flowchart TD
     K --> L[5 to 10 Results with reasoning]
     L --> M[HTML Frontend]
 
+```
+
+## Project Structure
+
+```
+├── src/
+│   ├── main.py              # FastAPI server, lifespan resource loading
+│   └── query_pipeline.py    # Two-stage pipeline: intent > embed > FAISS > rerank
+├── scripts/
+│   ├── build_index.py       # Offline: CSV > embeddings > FAISS index
+│   └── fetch_posters.py     # Offline: TMDB API > poster URLs (optional, pre-committed)
+├── frontend/
+│   └── index.html           # Single-page UI with poster collage
+├── data/
+│   ├── netflix_data.csv     # Source dataset (8,807 titles)
+│   ├── posters.json         # Pre-fetched TMDB poster URLs
+│   ├── faiss.index          # Generated at build time
+│   ├── metadata.json        # Generated at build time
+│   └── embeddings.npy       # Generated at build time
+├── test/
+│   └── qa_test.py           # QA test suite (25 queries)
+├── Dockerfile
+├── requirements.txt
+└── README.md
 ```
 
 ## AI Setup
@@ -73,7 +97,7 @@ The surviving FAISS candidates - along with their cosine similarity scores - are
 
 ### Index at Build Time
 
-Embedding 8,807 titles takes approximately 3 minutes on CPU. Running this at container startup would add a 3-minute delay before the server accepts requests. Building the FAISS index at Docker build time bakes it into the image - container startup takes under 5 seconds by loading the pre-built index directly into memory.
+Embedding 8,807 titles takes approximately 3 minutes on the CPU. Running this at container startup would add a 3-minute delay before the server accepts requests. Building the FAISS index at Docker build time bakes it into the image - container startup takes under 5 seconds by loading the pre-built index directly into memory.
 ## Setup
 
 ### Prerequisites
@@ -85,7 +109,7 @@ Embedding 8,807 titles takes approximately 3 minutes on CPU. Running this at con
 
 ```bash
 # Build the image (~5 min: downloads model + generates FAISS index)
-docker build -t cinematch .
+docker build -t cinematch.
 
 # Run the container
 docker run -p 8080:80 -e OPENAI_API_KEY=your-openai-key cinematch
@@ -118,33 +142,8 @@ uvicorn src.main:app --host 0.0.0.0 --port 8080
 
 ### Features
 
-
-
 - **Transparency notes:** Info banner when few direct matches exist (e.g., director queries)
 - **Graceful degradation:** Without API key, shows FAISS results with explanation banner
 
 
 
-## Project Structure
-
-```
-├── src/
-│   ├── main.py              # FastAPI server, lifespan resource loading
-│   └── query_pipeline.py    # Two-stage pipeline: intent > embed > FAISS > rerank
-├── scripts/
-│   ├── build_index.py       # Offline: CSV > embeddings > FAISS index
-│   └── fetch_posters.py     # Offline: TMDB API > poster URLs (optional, pre-committed)
-├── frontend/
-│   └── index.html           # Single-page UI with poster collage
-├── data/
-│   ├── netflix_data.csv     # Source dataset (8,807 titles)
-│   ├── posters.json         # Pre-fetched TMDB poster URLs
-│   ├── faiss.index          # Generated at build time
-│   ├── metadata.json        # Generated at build time
-│   └── embeddings.npy       # Generated at build time
-├── test/
-│   └── qa_test.py           # QA test suite (25 queries)
-├── Dockerfile
-├── requirements.txt
-└── README.md
-```

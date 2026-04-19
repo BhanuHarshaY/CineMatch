@@ -2,7 +2,16 @@
 
 A content-based movie recommendation system that uses **two-stage retrieval** (FAISS dense retrieval + GPT-4o-mini re-ranking) to answer natural language queries like *"something dark and psychological like Inception"* against 8,807 Netflix titles.
 
-![CineMatch Demo](demo_screenshot.png)
+### Homepage
+![CineMatch Homepage](docs/homepage.png)
+
+### Search Results: "Psychological Thrillers"
+![CineMatch Search Results](docs/results.png)
+
+
+*The system successfully retrieved and ranked 5 top-tier results for the query, complete with per-item reasoning.*
+
+
 
 ## Architecture
 
@@ -38,16 +47,33 @@ flowchart TD
 
 ## Approach
 
-CineMatch uses a two-stage content-based retrieval pipeline. Rather than relying on a single similarity search, it separates retrieval (high recall) from re-ranking (high precision), allowing each stage to optimize for what it does best.
+## Approach
 
-When a user submits a natural language query, GPT-4o-mini first extracts structured intent - genres, mood, themes, content type, era - and generates an enriched query. A raw query like "something cozy for a rainy Sunday" becomes a dense paragraph of semantic anchors ("warm, comforting films with gentle storytelling, themes of home and friendship..."), giving the embedding model 20+ meaningful terms instead of 5 vague words.
+CineMatch uses a two-stage content-based retrieval pipeline that separates retrieval (high recall) from re-ranking (high precision), allowing each stage to optimize for what it does best.
 
-The enriched query is embedded using `all-mpnet-base-v2` (768-dimensional, cosine-trained) and searched against the FAISS `IndexFlatIP` index of 8,807 pre-computed title vectors. FAISS returns the top 50 candidates, which are then filtered through an adaptive threshold cascade: strict (0.30) for specific queries that produce high similarity scores, relaxing to 0.22 then 0.15 for abstract mood queries where no single title is a near-exact match. This ensures broad queries get enough candidates without polluting specific ones.
+### Query Understanding
 
-The surviving candidates are passed to GPT-4o-mini for re-ranking against the full query intent. The re-ranker applies constraints that embedding similarity alone cannot capture: rating filters for family queries, content-type exclusions (no stand-up specials for "comedy movie"), director accuracy checks, and thematic relevance scoring. It returns 5-10 results with per-item reasoning, dropping weak matches rather than padding to a fixed count.
+Raw natural language queries are first processed by GPT-4o-mini to extract structured intent - genres, mood, themes, content type, and era. A vague query like *"something cozy for a rainy Sunday"* is expanded into a dense paragraph of semantic anchors (*"warm, comforting films with gentle storytelling, themes of home and friendship..."*), giving the embedding model 20+ meaningful terms instead of 5 vague words. This enriched query is what gets embedded - not the raw input.
 
-Key design choices: duration is excluded from embedding text (it is a filter, not a semantic signal), FAISS similarity scores are passed to the re-ranker as additional context, and the FAISS index is built at Docker build time so container startup takes under 5 seconds instead of regenerating embeddings on every deploy.
+### Movie Representation
 
+Each of the 8,807 Netflix titles is converted into a rich text representation combining type, genre, rating, country, cast, director, and description into a single string. The description is placed last to give it the most weight in the embedding model's attention. Duration is deliberately excluded - it is a filter, not a semantic signal. A 90-minute thriller and a 180-minute thriller can be equally relevant; embedding duration would pull vectors toward films of similar length regardless of content.
+
+### Retrieval
+
+The enriched query is embedded using `all-mpnet-base-v2` (768-dimensional, cosine-trained) and searched against a FAISS `IndexFlatIP` index of pre-computed title vectors. IndexFlatIP on L2-normalized vectors is mathematically equivalent to cosine similarity - the correct metric for sentence-transformers. FAISS returns the top 50 candidates in under 1ms.
+
+### Adaptive Threshold
+
+Rather than a fixed similarity cutoff, CineMatch uses a cascade: strict (0.30) for specific queries that produce high FAISS scores, relaxing to 0.22 then 0.15 for abstract mood queries where no single title is a near-exact match. Query complexity (word count) also influences the starting threshold - a two-word query like *"funny movie"* starts at 0.15 directly, while a detailed query like *"psychological thriller with an unreliable narrator"* starts at 0.30. This prevents both over-filtering vague queries and under-filtering precise ones.
+
+### Re-ranking
+
+The surviving FAISS candidates - along with their cosine similarity scores - are passed to GPT-4o-mini for re-ranking against the full query intent. Passing similarity scores gives the re-ranker quantitative context alongside its qualitative reasoning. The re-ranker applies constraints embedding similarity alone cannot capture: rating filters for family queries, content-type exclusions (no stand-up specials for *"comedy movie"*), director accuracy checks, and thematic relevance scoring. It returns 5-10 results with per-item reasoning, dropping weak matches rather than padding to a fixed count.
+
+### Index at Build Time
+
+Embedding 8,807 titles takes approximately 3 minutes on CPU. Running this at container startup would add a 3-minute delay before the server accepts requests. Building the FAISS index at Docker build time bakes it into the image - container startup takes under 5 seconds by loading the pre-built index directly into memory.
 ## Setup
 
 ### Prerequisites

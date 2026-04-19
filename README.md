@@ -71,8 +71,6 @@ flowchart TD
 
 ## Approach
 
-## Approach
-
 CineMatch uses a two-stage content-based retrieval pipeline that separates retrieval (high recall) from re-ranking (high precision), allowing each stage to optimize for what it does best.
 
 ### Query Understanding

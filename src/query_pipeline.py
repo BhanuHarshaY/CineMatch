@@ -451,16 +451,19 @@ def recommend(query: str, model=None, index=None, metadata=None) -> dict:
 
 # CLI for testing
 if __name__ == "__main__":
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        print("ERROR: GOOGLE_API_KEY not found.")
-        print("  Either add it to .env file or: export GOOGLE_API_KEY='your-key-here'")
+        print("ERROR: OPENAI_API_KEY not found.")
+        print("  Either add it to .env file or: export OPENAI_API_KEY='your-key-here'")
         exit(1)
 
     test_queries = [
-        "something dark and psychological like inception",
+        "something dark and psychological like Inception",
+        "Indian comedy films",
+        "European drama with romance",
+        "if I liked Parasite what should I watch next",
         "feel-good comedy for family night",
-        "korean drama with romance",
+        "documentary about nature",
     ]
 
     for q in test_queries:
@@ -477,6 +480,3 @@ if __name__ == "__main__":
                   f"— score: {r.get('faiss_score', 0):.4f}")
             if reason:
                 print(f"     → {reason}")
-
-        print("\n(Skipping remaining test queries to avoid rate limits)")
-        break
